@@ -1,3 +1,4 @@
+#include <stdlib.h>
 #include "lib/mpc.h"
 
 /* If we are compiling on Windows compile these functions */
@@ -38,12 +39,21 @@ void add_history(char* unused) {}
 // 	return 0;
 // }
 
+long eval_unary_op(long x, char* op) {
+	if (strcmp(op, "-") == 0) { return - x; }
+	return 0;
+}
+
 /* Use operator string to see which operation to perform */
 long eval_op(long x, char* op, long y) {
 	if (strcmp(op, "+") == 0) { return x + y; }
 	if (strcmp(op, "-") == 0) { return x - y; }
 	if (strcmp(op, "*") == 0) { return x * y; }
 	if (strcmp(op, "/") == 0) { return x / y; }
+	if (strcmp(op, "%") == 0) { return x % y; }
+	if (strcmp(op, "^") == 0) { return pow(x, y); }
+	if (strcmp(op, "min") == 0) { return x < y ? x : y; }
+	if (strcmp(op, "max") == 0) { return x > y ? x : y; }
 	return 0;
 }
 
@@ -61,6 +71,10 @@ long eval (mpc_ast_t* t) {
 
 	/* Iterate the remaining children and combine */
 	int i = 3;
+
+	if (strcmp(op, "-") == 0 && !strstr(t->children[i]->tag, "expr")) {
+		return eval_unary_op(x, op);
+	}
 	while (strstr(t->children[i]->tag, "expr")) {
 		x = eval_op(x, op, eval(t->children[i]));
 		i++;
@@ -80,7 +94,8 @@ int main(int argc, char** argv) {
 	mpca_lang(MPCA_LANG_DEFAULT,
 		"															\
 			number		: /-?[0-9]+/;								\
-			operator	: '+' | '-' | '*' | '/';					\
+			operator	: '+' | '-' | '*' | '/' | '%' | '^'			\
+						| \"min\" | \"max\";						\
 			expr		: <number> | '(' <operator> <expr>+ ')';	\
 			lispy		: /^/ <operator> <expr>+ /$/;				\
 		",
