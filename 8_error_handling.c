@@ -24,25 +24,27 @@ void add_history(char* unused) {}
 #include <editline/readline.h>
 #endif
 
-/* Declare new lval struct */
-typedef struct {
-	int type;
-	long num;
-	int err;
-} lval;
-
 /* Create enumeration of possible lval types */
-enum {
+enum lval_type {
 	LVAL_NUM,
 	LVAL_ERR
 };
 
 /* Create enumeration of possible error types */
-enum {
+enum lval_err_type {
 	LERR_DIV_ZERO,
 	LERR_BAD_OP,
 	LERR_BAD_NUM
 };
+
+/* Declare new lval struct */
+typedef struct {
+	enum lval_type type;
+	union {
+		long num;
+		enum lval_err_type err;
+	};
+} lval;
 
 /* Create a new number type lval */
 lval lval_num(long x) {
