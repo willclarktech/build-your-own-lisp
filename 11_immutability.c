@@ -54,7 +54,10 @@ struct lval;
 struct lenv;
 typedef struct lval lval;
 typedef struct lenv lenv;
+typedef lval*(*lbuiltin) (lenv*, lval*);
 lval* lval_eval(lenv* e, lval *v);
+lval* lenv_get(lenv* e, lval* k);
+char* find_builtin(lenv* e, lbuiltin b);
 
 /* Create enumeration of possible lval types */
 enum lval_type {
@@ -63,10 +66,10 @@ enum lval_type {
 	LVAL_SYM,
 	LVAL_FUN,
 	LVAL_SEXPR,
-	LVAL_QEXPR
+	LVAL_QEXPR,
+	LVAL_EXIT
 };
 
-typedef lval*(*lbuiltin) (lenv*, lval*);
 
 struct lval {
 	enum lval_type type;
@@ -88,6 +91,7 @@ char* ltype_name(enum lval_type t) {
 		case LVAL_FUN: return "Function";
 		case LVAL_SEXPR: return "S-Expression";
 		case LVAL_QEXPR: return "Q-Expression";
+		case LVAL_EXIT: return "Exit";
 		default: return "Unknown";
 	}
 }
@@ -158,11 +162,21 @@ lval* lval_qexpr(void) {
 	return v;
 }
 
+/* Construct a pointer to a new Exit lval */
+lval* lval_exit(void) {
+	lval* v = malloc(sizeof(lval));
+	v->type = LVAL_EXIT;
+	v->count = 0;
+	v->cell = NULL;
+	return v;
+}
+
 void lval_del(lval* v) {
 	switch(v->type) {
-		/* Do nothing special for number/function type */
+		/* Do nothing special for number/function/exit type */
 		case LVAL_NUM:
 		case LVAL_FUN:
+		case LVAL_EXIT:
 			break;
 
 		/* For Err or Sym free the string data) */
@@ -247,6 +261,9 @@ lval* lval_copy(lval* v) {
 	x->type = v->type;
 
 	switch(x->type) {
+		/* Nothing to do for exit */
+		case LVAL_EXIT:
+			break;
 		/* Copy functions and numbers directly */
 		case LVAL_NUM:
 			x->num = v->num;
@@ -280,13 +297,13 @@ lval* lval_copy(lval* v) {
 }
 
 /* Forward declaration for circular dependency */
-void lval_print(lval* v);
+void lval_print(lenv* e, lval* v);
 
-void lval_expr_print(lval* v, char open, char close) {
+void lval_expr_print(lenv*e, lval* v, char open, char close) {
 	putchar(open);
 	for (int i = 0; i < v->count; i++) {
 		/* Print value contained within */
-		lval_print(v->cell[i]);
+		lval_print(e, v->cell[i]);
 		/* Don't print trailing space if last element */
 		if (i != (v->count - 1)) {
 			putchar(' ');
@@ -296,7 +313,7 @@ void lval_expr_print(lval* v, char open, char close) {
 }
 
 /* Print an lval */
-void lval_print(lval* v) {
+void lval_print(lenv* e, lval* v) {
 	switch (v->type) {
 		case LVAL_NUM:
 			printf("%li", v->num);
@@ -307,14 +324,19 @@ void lval_print(lval* v) {
 		case LVAL_SYM:
 			printf("%s", v->sym);
 			break;
-		case LVAL_FUN:
-			printf("<function>");
+		case LVAL_FUN: {
+			char* func = find_builtin(e, v->fun);
+			printf("<function: %s>", func);
 			break;
+		}
 		case LVAL_SEXPR:
-			lval_expr_print(v, '(', ')');
+			lval_expr_print(e, v, '(', ')');
 			break;
 		case LVAL_QEXPR:
-			lval_expr_print(v, '{', '}');
+			lval_expr_print(e, v, '{', '}');
+			break;
+		case LVAL_EXIT:
+			printf("<exit>");
 			break;
 		default:
 			printf("uh oh");
@@ -322,8 +344,8 @@ void lval_print(lval* v) {
 };
 
 /* Print an lval followed by a newline */
-void lval_println(lval* v) {
-	lval_print(v);
+void lval_println(lenv* e, lval* v) {
+	lval_print(e, v);
 	putchar('\n');
 };
 
@@ -542,15 +564,16 @@ lval* lval_eval_sexpr(lenv* e, lval* v) {
 	if (v->count == 0) {
 		return v;
 	}
-	/* Single expression */
-	if (v->count == 1) {
+	/* Single expression, except exit and deflist*/
+	int is_exit = (v->cell[0]->fun == lenv_get(e, lval_sym("exit"))->fun);
+	int is_deflist = (v->cell[0]->fun == lenv_get(e, lval_sym("deflist"))->fun);
+	if (v->count == 1 && !is_exit & !is_deflist) {
 		return lval_take(v, 0);
 	}
 
 	/* Ensure first element is a function after evaluation */
 	lval* f = lval_pop(v, 0);
 	if (f->type != LVAL_FUN) {
-		lval_println(f);
 		lval_del(f);
 		lval_del(v);
 		return lval_err("First element is not a function. Got %s.", ltype_name(f->type));
@@ -566,6 +589,9 @@ struct lenv {
 	int count;
 	char** syms;
 	lval** vals;
+
+	int builtins_count;
+	char** builtins;
 };
 
 lenv* lenv_new(void) {
@@ -573,6 +599,8 @@ lenv* lenv_new(void) {
 	e->count = 0;
 	e->syms = NULL;
 	e->vals = NULL;
+	e->builtins_count = 0;
+	e->builtins = NULL;
 	return e;
 }
 
@@ -619,6 +647,13 @@ void lenv_put(lenv* e, lval* k, lval* v) {
 	strcpy(e->syms[e->count - 1], k->sym);
 }
 
+void lenv_put_builtin(lenv* e, lval* k) {
+	e->builtins_count++;
+	e->builtins = realloc(e->builtins, sizeof(char*) * e->builtins_count);
+	e->builtins[e->builtins_count - 1] = malloc(strlen(k->sym) + 1);
+	strcpy(e->builtins[e->builtins_count - 1], k->sym);
+}
+
 lval* lval_eval(lenv* e, lval* v) {
 	if (v->type == LVAL_SYM) {
 		lval* x = lenv_get(e, v);
@@ -642,6 +677,13 @@ lval* builtin_def(lenv* e, lval* a) {
 		LASSERT(a, syms->cell[i]->type == LVAL_SYM, "Function 'def' cannot define non-symbol. Got %s.", ltype_name(syms->cell[i]->type));
 	}
 
+	/* Ensure no elements are builtins */
+	for (int i = 0; i < syms->count; ++i) {
+		for (int j = 0; j < e->builtins_count; ++j) {
+			LASSERT(a, strcmp(syms->cell[i]->sym, e->builtins[j]) != 0, "Function 'def' cannot redefine builtin '%s'", e->builtins[j]);
+		}
+	}
+
 	/* Check correct number of symbols and values */
 	LASSERT(a, syms->count == a->count - 1, "Function 'def' cannot define incorrect number of values to symbols. Got %i symbols but %i values.", syms->count, a->count - 1);
 
@@ -654,10 +696,32 @@ lval* builtin_def(lenv* e, lval* a) {
 	return lval_sexpr();
 }
 
+lval* builtin_exit(lenv* e, lval* a) {
+	return lval_exit();
+}
+
+lval* builtin_deflist(lenv* e, lval* a) {
+	for (int i = 0; i < e->count; ++i) {
+		printf("%s\t", e->syms[i]);
+	}
+	printf("\n");
+	return lval_sexpr();
+}
+
+char* find_builtin(lenv* e, lbuiltin b) {
+	for (int i = 0; i < e->count; ++i) {
+		if (e->vals[i]->fun == b) {
+			return e->syms[i];
+		}
+	}
+	return "unknown";
+}
+
 void lenv_add_builtin(lenv* e, char* name, lbuiltin func) {
 	lval* k = lval_sym(name);
 	lval* v = lval_fun(func);
 	lenv_put(e, k, v);
+	lenv_put_builtin(e, k);
 	lval_del(k);
 	lval_del(v);
 }
@@ -683,6 +747,10 @@ void lenv_add_builtins(lenv* e) {
 
 	/* Variable functions */
 	lenv_add_builtin(e, "def", builtin_def);
+	lenv_add_builtin(e, "deflist", builtin_deflist);
+
+	/* Application functions */
+	lenv_add_builtin(e, "exit", builtin_exit);
 }
 
 int main(int argc, char** argv) {
@@ -713,7 +781,9 @@ int main(int argc, char** argv) {
 	lenv* e = lenv_new();
 	lenv_add_builtins(e);
 
-	while (1) {
+	int repeat = 1;
+
+	while (repeat) {
 		/* Now in either case readline will be correctly defined */
 		char* input = readline("lispy> ");
 		add_history(input);
@@ -722,7 +792,11 @@ int main(int argc, char** argv) {
 		mpc_result_t r;
 		if (mpc_parse("<stdin>", input, Lispy, &r)) {
 			lval* x = lval_eval(e, lval_read(r.output));
-			lval_println(x);
+			if (x->type == LVAL_EXIT) {
+				repeat = 0;
+			} else {
+				lval_println(e, x);
+			}
 			lval_del(x);
 			mpc_ast_delete(r.output);
 		} else {
