@@ -28,7 +28,7 @@ void add_history(char* unused) {}
 	if(!(cond)) { lval_del(a); return lval_err(err); }
 
 #define LASSERT_NUM_ARGS(a, num, func) \
-	if(a->count != num) { lval_del(a); return lval_err("Function '" func "' passed too many arguments"); }
+	if(a->count != num) { lval_del(a); return lval_err("Function '" func "' passed incorrect number of arguments"); }
 
 #define LASSERT_TYPE(a, t, func) \
 	if (a->cell[0]->type != t) { lval_del(a); return lval_err("Function '" func "' passed incorrect type"); }
@@ -310,14 +310,56 @@ lval* builtin_join(lval* a) {
 		LASSERT_TYPE(a, LVAL_QEXPR, "join");
 	}
 
-	lval* x = lval_pop(a, 0);
+	lval* x = lval_take(a, 0);
 
 	while (a->count) {
 		x = lval_join(x, lval_pop(a, 0));
 	}
 
-	lval_del(a);
 	return x;
+}
+
+lval* builtin_cons(lval* a) {
+	LASSERT_NUM_ARGS(a, 2, "cons");
+	lval* v = lval_pop(a, 0);
+	lval* q = lval_take(a, 0);
+	LASSERT(q, q->type == LVAL_QEXPR, "Function 'cons' passed incorrect type");
+
+	/* Reallocate the memory used */
+	q->cell = realloc(q->cell, sizeof(lval*) * (q->count + 1));
+	/* Shift the memory up one */
+	if (q->count) {
+		memmove(&q->cell[1], &q->cell[0], sizeof(lval*) * q->count);
+	}
+
+	/* Increase the count of items in the list */
+	q->count++;
+
+	/* Prepend value */
+	q->cell[0] = v;
+	return q;
+}
+
+lval* builtin_len(lval* a) {
+	LASSERT_NUM_ARGS(a, 1, "len");
+	LASSERT_TYPE(a, LVAL_QEXPR, "len");
+	lval* q = lval_take(a, 0);
+
+	return lval_num(q->count);
+}
+
+lval* builtin_init(lval* a) {
+	LASSERT_NUM_ARGS(a, 1, "init");
+	LASSERT_TYPE(a, LVAL_QEXPR, "init");
+	LASSERT_NOT_EMPTY_LIST(a, "init");
+	lval* q = lval_take(a, 0);
+
+	/* Decrease the count of items in the list */
+	q->count--;
+	/* Reallocate the memory used */
+	q->cell = realloc(q->cell, sizeof(lval*) * (q->count));
+
+	return q;
 }
 
 lval* builtin_op(lval* a, char* op) {
@@ -370,6 +412,9 @@ lval* builtin(lval* a, char* func) {
 	if (strcmp("tail", func) == 0) { return builtin_tail(a); }
 	if (strcmp("join", func) == 0) { return builtin_join(a); }
 	if (strcmp("eval", func) == 0) { return builtin_eval(a); }
+	if (strcmp("cons", func) == 0) { return builtin_cons(a); }
+	if (strcmp("len", func) == 0) { return builtin_len(a); }
+	if (strcmp("init", func) == 0) { return builtin_init(a); }
 
 	lval_del(a);
 	return lval_err("Unknown function");
@@ -432,7 +477,8 @@ int main(int argc, char** argv) {
 		"																		\
 			number	: /-?[0-9]+/ ;												\
 			symbol	: '+' | '-' | '*' | '/' | '%' | '^' 						\
-					| \"list\" | \"head\" | \"tail\" | \"join\" | \"eval\" ;	\
+					| \"list\" | \"head\" | \"tail\" | \"join\" | \"eval\"		\
+					| \"cons\" | \"len\" | \"init\" ;							\
 			sexpr	: '(' <expr>* ')' ;											\
 			qexpr	: '{' <expr>* '}' ;											\
 			expr	: <number> | <symbol> | <sexpr> | <qexpr> ;					\
