@@ -1,13 +1,14 @@
 #include "lib/mpc.h"
 
-int main(int argc, char** argv) {
-	mpc_parser_t* Adjective = mpc_new("adjective");
-	mpc_parser_t* Noun = mpc_new("noun");
-	mpc_parser_t* Phrase = mpc_new("phrase");
-	mpc_parser_t* Doge = mpc_new("doge");
+int main(int argc, char **argv)
+{
+	mpc_parser_t *Adjective = mpc_new("adjective");
+	mpc_parser_t *Noun = mpc_new("noun");
+	mpc_parser_t *Phrase = mpc_new("phrase");
+	mpc_parser_t *Doge = mpc_new("doge");
 
 	mpca_lang(MPCA_LANG_DEFAULT,
-		"												\
+			  "												\
 			adjective	: \"wow\" | \"many\"			\
 						| \"so\" | \"such\";			\
 			noun		: \"lisp\" | \"language\"		\
@@ -15,8 +16,7 @@ int main(int argc, char** argv) {
 			phrase		: <adjective> <noun>;			\
 			doge		: <phrase>*;					\
 		",
-		Adjective, Noun, Phrase, Doge
-	);
+			  Adjective, Noun, Phrase, Doge);
 
 	/* Do some parsing here... */
 
