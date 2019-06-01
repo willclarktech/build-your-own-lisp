@@ -1,0 +1,6 @@
+; Define two values
+(def {x y} 100 200)
+; Add them together and store
+(def {z} (+ x y))
+; Print the result
+(print z)
